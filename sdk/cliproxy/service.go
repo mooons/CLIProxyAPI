@@ -8,12 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/api"
-	_ "github.com/router-for-me/CLIProxyAPI/v6/internal/redisqueue"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/redisqueue"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/runtime/executor"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/watcher"
@@ -89,7 +90,17 @@ type Service struct {
 
 	// wsGateway manages websocket Gemini providers.
 	wsGateway *wsrelay.Manager
+
+	usageExportMu     sync.Mutex
+	usageExportCancel context.CancelFunc
+	usageExportDone   chan struct{}
+	usageExportPath   string
 }
+
+const (
+	usageStatisticsExportFileName = "usage-statistics-export.json"
+	usageStatisticsExportInterval = 30 * time.Second
+)
 
 // RegisterUsagePlugin registers a usage plugin on the global usage manager.
 // This allows external code to monitor API usage and token consumption.
@@ -349,6 +360,138 @@ func (s *Service) applyRetryConfig(cfg *config.Config) {
 	s.coreManager.SetRetryConfig(cfg.RequestRetry, maxInterval, cfg.MaxRetryCredentials)
 }
 
+func (s *Service) usageStatisticsExportPath(cfg *config.Config) string {
+	base := ""
+	if cfg != nil {
+		base = strings.TrimSpace(cfg.AuthDir)
+	}
+	if base == "" {
+		base = filepath.Dir(s.configPath)
+	}
+	if base == "." || base == "" {
+		if wd, err := os.Getwd(); err == nil {
+			base = wd
+		}
+	}
+	return filepath.Join(base, usageStatisticsExportFileName)
+}
+
+func (s *Service) loadUsageStatisticsExport(cfg *config.Config) {
+	if s == nil || cfg == nil || !cfg.UsageStatisticsExportEnabled {
+		return
+	}
+	path := s.usageStatisticsExportPath(cfg)
+	count, err := redisqueue.LoadFromDisk(path)
+	if err != nil {
+		log.Warnf("failed to load usage statistics export from %s: %v", path, err)
+		return
+	}
+	if count > 0 {
+		log.Infof("loaded %d usage statistics record(s) from %s", count, path)
+	}
+}
+
+func (s *Service) startUsageStatisticsExport(ctx context.Context, cfg *config.Config) {
+	if s == nil || cfg == nil || !cfg.UsageStatisticsExportEnabled {
+		return
+	}
+	path := s.usageStatisticsExportPath(cfg)
+
+	s.usageExportMu.Lock()
+	if s.usageExportCancel != nil && s.usageExportPath == path {
+		s.usageExportMu.Unlock()
+		return
+	}
+	s.usageExportMu.Unlock()
+
+	s.stopUsageStatisticsExport(true)
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	exportCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+
+	s.usageExportMu.Lock()
+	s.usageExportCancel = cancel
+	s.usageExportDone = done
+	s.usageExportPath = path
+	s.usageExportMu.Unlock()
+
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(usageStatisticsExportInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-exportCtx.Done():
+				return
+			case <-ticker.C:
+				s.exportUsageStatistics(path, "periodic")
+			}
+		}
+	}()
+	log.Infof("usage statistics disk export enabled: %s", path)
+}
+
+func (s *Service) stopUsageStatisticsExport(export bool) {
+	if s == nil {
+		return
+	}
+
+	s.usageExportMu.Lock()
+	cancel := s.usageExportCancel
+	done := s.usageExportDone
+	path := s.usageExportPath
+	s.usageExportCancel = nil
+	s.usageExportDone = nil
+	s.usageExportPath = ""
+	s.usageExportMu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	if done != nil {
+		<-done
+	}
+	if export && path != "" {
+		s.exportUsageStatistics(path, "final")
+	}
+}
+
+func (s *Service) stopUsageStatisticsExportForReload(newCfg *config.Config) {
+	if s == nil {
+		return
+	}
+	s.usageExportMu.Lock()
+	running := s.usageExportCancel != nil
+	currentPath := s.usageExportPath
+	s.usageExportMu.Unlock()
+	if !running {
+		return
+	}
+
+	nextEnabled := newCfg != nil && newCfg.UsageStatisticsExportEnabled
+	nextPath := ""
+	if nextEnabled {
+		nextPath = s.usageStatisticsExportPath(newCfg)
+	}
+	if !nextEnabled || nextPath != currentPath {
+		s.stopUsageStatisticsExport(true)
+	}
+}
+
+func (s *Service) exportUsageStatistics(path, reason string) {
+	count, err := redisqueue.ExportToDisk(path)
+	if err != nil {
+		log.Warnf("failed to export usage statistics to %s: %v", path, err)
+		return
+	}
+	if count > 0 {
+		log.Debugf("%s usage statistics export wrote %d record(s) to %s", reason, count, path)
+	}
+}
+
 func openAICompatInfoFromAuth(a *coreauth.Auth) (providerKey string, compatName string, ok bool) {
 	if a == nil {
 		return "", "", false
@@ -480,6 +623,7 @@ func (s *Service) Run(ctx context.Context) error {
 	}
 
 	usage.StartDefault(ctx)
+	redisqueue.SetUsageStatisticsEnabled(s.cfg.UsageStatisticsEnabled)
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
@@ -492,6 +636,7 @@ func (s *Service) Run(ctx context.Context) error {
 	if err := s.ensureAuthDir(); err != nil {
 		return err
 	}
+	s.loadUsageStatisticsExport(s.cfg)
 
 	s.applyRetryConfig(s.cfg)
 
@@ -521,6 +666,7 @@ func (s *Service) Run(ctx context.Context) error {
 
 	// handlers no longer depend on legacy clients; pass nil slice initially
 	s.server = api.NewServer(s.cfg, s.coreManager, s.accessManager, s.configPath, s.serverOptions...)
+	s.startUsageStatisticsExport(ctx, s.cfg)
 
 	if s.authManager == nil {
 		s.authManager = newDefaultAuthManager()
@@ -675,6 +821,7 @@ func (s *Service) Run(ctx context.Context) error {
 
 		s.applyRetryConfig(newCfg)
 		s.applyPprofConfig(newCfg)
+		s.stopUsageStatisticsExportForReload(newCfg)
 		if s.server != nil {
 			s.server.UpdateClients(newCfg)
 		}
@@ -686,6 +833,7 @@ func (s *Service) Run(ctx context.Context) error {
 			s.coreManager.SetOAuthModelAlias(newCfg.OAuthModelAlias)
 		}
 		s.rebindExecutors()
+		s.startUsageStatisticsExport(ctx, newCfg)
 	}
 
 	watcherWrapper, err = s.watcherFactory(s.configPath, s.cfg.AuthDir, reloadCallback)
@@ -788,7 +936,10 @@ func (s *Service) Shutdown(ctx context.Context) error {
 			}
 		}
 
-		usage.StopDefault()
+		if !usage.StopDefaultAndWait(5 * time.Second) {
+			log.Warn("usage dispatcher did not finish draining before shutdown export")
+		}
+		s.stopUsageStatisticsExport(true)
 	})
 	return shutdownErr
 }

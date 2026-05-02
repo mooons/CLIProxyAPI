@@ -308,7 +308,7 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	// or when a local management password is provided (e.g. TUI mode).
 	hasManagementSecret := cfg.RemoteManagement.SecretKey != "" || envManagementSecret || s.localPassword != ""
 	s.managementRoutesEnabled.Store(hasManagementSecret)
-	redisqueue.SetEnabled(hasManagementSecret)
+	redisqueue.SetEnabled(hasManagementSecret || cfg.UsageStatisticsExportEnabled)
 	if hasManagementSecret {
 		s.registerManagementRoutes()
 	}
@@ -530,6 +530,9 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.GET("/usage-statistics-enabled", s.mgmt.GetUsageStatisticsEnabled)
 		mgmt.PUT("/usage-statistics-enabled", s.mgmt.PutUsageStatisticsEnabled)
 		mgmt.PATCH("/usage-statistics-enabled", s.mgmt.PutUsageStatisticsEnabled)
+		mgmt.GET("/usage-statistics-export-enabled", s.mgmt.GetUsageStatisticsExportEnabled)
+		mgmt.PUT("/usage-statistics-export-enabled", s.mgmt.PutUsageStatisticsExportEnabled)
+		mgmt.PATCH("/usage-statistics-export-enabled", s.mgmt.PutUsageStatisticsExportEnabled)
 
 		mgmt.GET("/proxy-url", s.mgmt.GetProxyURL)
 		mgmt.PUT("/proxy-url", s.mgmt.PutProxyURL)
@@ -1056,7 +1059,7 @@ func (s *Server) UpdateClients(cfg *config.Config) {
 			s.managementRoutesEnabled.Store(!newSecretEmpty)
 		}
 	}
-	redisqueue.SetEnabled(s.managementRoutesEnabled.Load())
+	redisqueue.SetEnabled(s.managementRoutesEnabled.Load() || cfg.UsageStatisticsExportEnabled)
 
 	s.applyAccessConfig(oldCfg, cfg)
 	s.cfg = cfg

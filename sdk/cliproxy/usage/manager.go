@@ -47,6 +47,7 @@ type Manager struct {
 	once     sync.Once
 	stopOnce sync.Once
 	cancel   context.CancelFunc
+	done     chan struct{}
 
 	mu     sync.Mutex
 	cond   *sync.Cond
@@ -75,7 +76,14 @@ func (m *Manager) Start(ctx context.Context) {
 		}
 		var workerCtx context.Context
 		workerCtx, m.cancel = context.WithCancel(ctx)
-		go m.run(workerCtx)
+		done := make(chan struct{})
+		m.mu.Lock()
+		m.done = done
+		m.mu.Unlock()
+		go func() {
+			defer close(done)
+			m.run(workerCtx)
+		}()
 	})
 }
 
@@ -93,6 +101,31 @@ func (m *Manager) Stop() {
 		m.mu.Unlock()
 		m.cond.Broadcast()
 	})
+}
+
+// Wait blocks until the dispatcher has finished draining queued usage records.
+func (m *Manager) Wait(timeout time.Duration) bool {
+	if m == nil {
+		return true
+	}
+	m.mu.Lock()
+	done := m.done
+	m.mu.Unlock()
+	if done == nil {
+		return true
+	}
+	if timeout <= 0 {
+		<-done
+		return true
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
+	}
 }
 
 // Register appends a plugin to the delivery list.
@@ -181,3 +214,9 @@ func StartDefault(ctx context.Context) { DefaultManager().Start(ctx) }
 
 // StopDefault stops the default manager's dispatcher.
 func StopDefault() { DefaultManager().Stop() }
+
+// StopDefaultAndWait stops the default dispatcher and waits for queued records to drain.
+func StopDefaultAndWait(timeout time.Duration) bool {
+	DefaultManager().Stop()
+	return DefaultManager().Wait(timeout)
+}

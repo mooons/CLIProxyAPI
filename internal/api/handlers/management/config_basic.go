@@ -193,6 +193,14 @@ func (h *Handler) PutUsageStatisticsEnabled(c *gin.Context) {
 	h.updateBoolField(c, func(v bool) { h.cfg.UsageStatisticsEnabled = v })
 }
 
+// UsageStatisticsExportEnabled
+func (h *Handler) GetUsageStatisticsExportEnabled(c *gin.Context) {
+	c.JSON(200, gin.H{"usage-statistics-export-enabled": h.cfg.UsageStatisticsExportEnabled})
+}
+func (h *Handler) PutUsageStatisticsExportEnabled(c *gin.Context) {
+	h.updateBoolField(c, func(v bool) { h.cfg.UsageStatisticsExportEnabled = v })
+}
+
 // UsageStatisticsEnabled
 func (h *Handler) GetLoggingToFile(c *gin.Context) {
 	c.JSON(200, gin.H{"logging-to-file": h.cfg.LoggingToFile})

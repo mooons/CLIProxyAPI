@@ -55,6 +55,17 @@ func PopOldest(count int) [][]byte {
 	return global.popOldest(count)
 }
 
+func SnapshotPayloads() [][]byte {
+	return global.snapshotPayloads()
+}
+
+func LoadPayloads(payloads [][]byte) int {
+	if len(payloads) == 0 {
+		return 0
+	}
+	return global.loadPayloads(payloads)
+}
+
 func (q *queue) clear() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -101,6 +112,43 @@ func (q *queue) popOldest(count int) [][]byte {
 	q.head += count
 	q.maybeCompactLocked()
 	return out
+}
+
+func (q *queue) snapshotPayloads() [][]byte {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	available := len(q.items) - q.head
+	if available <= 0 {
+		return nil
+	}
+
+	out := make([][]byte, 0, available)
+	for i := q.head; i < len(q.items); i++ {
+		out = append(out, append([]byte(nil), q.items[i].payload...))
+	}
+	return out
+}
+
+func (q *queue) loadPayloads(payloads [][]byte) int {
+	now := time.Now()
+
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	loaded := 0
+	for _, payload := range payloads {
+		if len(payload) == 0 {
+			continue
+		}
+		q.items = append(q.items, queueItem{
+			enqueuedAt: now,
+			payload:    append([]byte(nil), payload...),
+		})
+		loaded++
+	}
+	q.maybeCompactLocked()
+	return loaded
 }
 
 func (q *queue) pruneLocked(now time.Time) {
