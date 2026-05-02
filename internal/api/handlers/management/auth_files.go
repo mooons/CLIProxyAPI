@@ -1025,8 +1025,30 @@ func (h *Handler) buildAuthFromFileData(path string, data []byte) (*coreauth.Aut
 		CreatedAt:  time.Now(),
 		UpdatedAt:  time.Now(),
 	}
+	if proxyURL, ok := metadata["proxy_url"].(string); ok {
+		auth.ProxyURL = strings.TrimSpace(proxyURL)
+	}
+	if prefix, ok := metadata["prefix"].(string); ok {
+		auth.Prefix = normalizeAuthPrefix(prefix)
+	}
 	if hasLastRefresh {
 		auth.LastRefreshedAt = lastRefresh
+	}
+	if strings.EqualFold(provider, "codex") {
+		if planType, ok := metadata["plan_type"].(string); ok && strings.TrimSpace(planType) != "" {
+			auth.Attributes["plan_type"] = strings.TrimSpace(planType)
+		} else if idTokenRaw, ok := metadata["id_token"].(string); ok && strings.TrimSpace(idTokenRaw) != "" {
+			if claims, errParse := codex.ParseJWTToken(strings.TrimSpace(idTokenRaw)); errParse == nil && claims != nil {
+				if pt := strings.TrimSpace(claims.CodexAuthInfo.ChatgptPlanType); pt != "" {
+					auth.Attributes["plan_type"] = pt
+				}
+			}
+		}
+	}
+	if refreshInterval, ok := metadata["refresh_interval_seconds"]; ok {
+		if seconds, okSeconds := codexInt64(refreshInterval); okSeconds && seconds > 0 {
+			auth.Attributes["refresh_interval_seconds"] = strconv.FormatInt(seconds, 10)
+		}
 	}
 	if h != nil && h.authManager != nil {
 		if existing, ok := h.authManager.GetByID(authID); ok {
