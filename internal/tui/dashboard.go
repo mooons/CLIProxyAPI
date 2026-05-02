@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 )
 
 // dashboardModel displays server info, stats cards, and config overview.
@@ -23,13 +24,13 @@ type dashboardModel struct {
 	// Cached data for re-rendering on locale change
 	lastConfig    map[string]any
 	lastAuthFiles []map[string]any
-	lastAPIKeys   []string
+	lastAPIKeys   []config.APIKeyEntry
 }
 
 type dashboardDataMsg struct {
 	config    map[string]any
 	authFiles []map[string]any
-	apiKeys   []string
+	apiKeys   []config.APIKeyEntry
 	err       error
 }
 
@@ -117,7 +118,7 @@ func (m dashboardModel) View() string {
 	return m.viewport.View()
 }
 
-func (m dashboardModel) renderDashboard(cfg map[string]any, authFiles []map[string]any, apiKeys []string) string {
+func (m dashboardModel) renderDashboard(cfg map[string]any, authFiles []map[string]any, apiKeys []config.APIKeyEntry) string {
 	var sb strings.Builder
 
 	sb.WriteString(titleStyle.Render(T("dashboard_title")))

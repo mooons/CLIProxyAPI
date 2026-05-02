@@ -3,7 +3,6 @@ package diff
 import (
 	"fmt"
 	"net/url"
-	"reflect"
 	"strings"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
@@ -94,8 +93,10 @@ func BuildConfigChangeDetails(oldCfg, newCfg *config.Config) []string {
 	// API keys (redacted) and counts
 	if len(oldCfg.APIKeys) != len(newCfg.APIKeys) {
 		changes = append(changes, fmt.Sprintf("api-keys count: %d -> %d", len(oldCfg.APIKeys), len(newCfg.APIKeys)))
-	} else if !reflect.DeepEqual(trimStrings(oldCfg.APIKeys), trimStrings(newCfg.APIKeys)) {
+	} else if !equalStringSlices(config.APIKeyValues(oldCfg.APIKeys), config.APIKeyValues(newCfg.APIKeys)) {
 		changes = append(changes, "api-keys: values updated (count unchanged, redacted)")
+	} else if !equalAPIKeyComments(oldCfg.APIKeys, newCfg.APIKeys) {
+		changes = append(changes, "api-keys: comments updated")
 	}
 	if len(oldCfg.GeminiKey) != len(newCfg.GeminiKey) {
 		changes = append(changes, fmt.Sprintf("gemini-api-key count: %d -> %d", len(oldCfg.GeminiKey), len(newCfg.GeminiKey)))
@@ -114,6 +115,9 @@ func BuildConfigChangeDetails(oldCfg, newCfg *config.Config) []string {
 			}
 			if strings.TrimSpace(o.APIKey) != strings.TrimSpace(n.APIKey) {
 				changes = append(changes, fmt.Sprintf("gemini[%d].api-key: updated", i))
+			}
+			if strings.TrimSpace(o.Comment) != strings.TrimSpace(n.Comment) {
+				changes = append(changes, fmt.Sprintf("gemini[%d].comment: updated", i))
 			}
 			if !equalStringMap(o.Headers, n.Headers) {
 				changes = append(changes, fmt.Sprintf("gemini[%d].headers: updated", i))
@@ -149,6 +153,9 @@ func BuildConfigChangeDetails(oldCfg, newCfg *config.Config) []string {
 			}
 			if strings.TrimSpace(o.APIKey) != strings.TrimSpace(n.APIKey) {
 				changes = append(changes, fmt.Sprintf("claude[%d].api-key: updated", i))
+			}
+			if strings.TrimSpace(o.Comment) != strings.TrimSpace(n.Comment) {
+				changes = append(changes, fmt.Sprintf("claude[%d].comment: updated", i))
 			}
 			if !equalStringMap(o.Headers, n.Headers) {
 				changes = append(changes, fmt.Sprintf("claude[%d].headers: updated", i))
@@ -198,6 +205,9 @@ func BuildConfigChangeDetails(oldCfg, newCfg *config.Config) []string {
 			}
 			if strings.TrimSpace(o.APIKey) != strings.TrimSpace(n.APIKey) {
 				changes = append(changes, fmt.Sprintf("codex[%d].api-key: updated", i))
+			}
+			if strings.TrimSpace(o.Comment) != strings.TrimSpace(n.Comment) {
+				changes = append(changes, fmt.Sprintf("codex[%d].comment: updated", i))
 			}
 			if !equalStringMap(o.Headers, n.Headers) {
 				changes = append(changes, fmt.Sprintf("codex[%d].headers: updated", i))
@@ -308,6 +318,9 @@ func BuildConfigChangeDetails(oldCfg, newCfg *config.Config) []string {
 			if strings.TrimSpace(o.APIKey) != strings.TrimSpace(n.APIKey) {
 				changes = append(changes, fmt.Sprintf("vertex[%d].api-key: updated", i))
 			}
+			if strings.TrimSpace(o.Comment) != strings.TrimSpace(n.Comment) {
+				changes = append(changes, fmt.Sprintf("vertex[%d].comment: updated", i))
+			}
 			oldModels := SummarizeVertexModels(o.Models)
 			newModels := SummarizeVertexModels(n.Models)
 			if oldModels.hash != newModels.hash {
@@ -333,6 +346,30 @@ func trimStrings(in []string) []string {
 		out[i] = strings.TrimSpace(in[i])
 	}
 	return out
+}
+
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if strings.TrimSpace(a[i]) != strings.TrimSpace(b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func equalAPIKeyComments(a, b []config.APIKeyEntry) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if strings.TrimSpace(a[i].Comment) != strings.TrimSpace(b[i].Comment) {
+			return false
+		}
+	}
+	return true
 }
 
 func equalStringMap(a, b map[string]string) bool {

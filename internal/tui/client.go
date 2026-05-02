@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 )
 
 // Client wraps HTTP calls to the management API.
@@ -236,7 +238,7 @@ func (c *Client) GetLogs(after int64, limit int) ([]string, int64, error) {
 
 // GetAPIKeys fetches the list of API keys.
 // API returns {"api-keys": [...]}.
-func (c *Client) GetAPIKeys() ([]string, error) {
+func (c *Client) GetAPIKeys() ([]config.APIKeyEntry, error) {
 	wrapper, err := c.getJSON("/v0/management/api-keys")
 	if err != nil {
 		return nil, err
@@ -249,7 +251,7 @@ func (c *Client) GetAPIKeys() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	var result []string
+	var result []config.APIKeyEntry
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return nil, err
 	}

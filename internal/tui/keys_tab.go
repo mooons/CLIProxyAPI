@@ -9,13 +9,14 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 )
 
 // keysTabModel displays and manages API keys.
 type keysTabModel struct {
 	client   *Client
 	viewport viewport.Model
-	keys     []string
+	keys     []config.APIKeyEntry
 	gemini   []map[string]any
 	claude   []map[string]any
 	codex    []map[string]any
@@ -37,7 +38,7 @@ type keysTabModel struct {
 }
 
 type keysDataMsg struct {
-	apiKeys []string
+	apiKeys []config.APIKeyEntry
 	gemini  []map[string]any
 	claude  []map[string]any
 	codex   []map[string]any
@@ -213,7 +214,7 @@ func (m keysTabModel) Update(msg tea.Msg) (keysTabModel, tea.Cmd) {
 				m.editing = true
 				m.adding = false
 				m.editIdx = m.cursor
-				m.editInput.SetValue(m.keys[m.cursor])
+				m.editInput.SetValue(m.keys[m.cursor].APIKey)
 				m.editInput.Prompt = T("edit_key_prompt")
 				m.editInput.Focus()
 				m.viewport.SetContent(m.renderContent())
@@ -230,7 +231,7 @@ func (m keysTabModel) Update(msg tea.Msg) (keysTabModel, tea.Cmd) {
 		case "c":
 			// Copy selected key to clipboard
 			if m.cursor < len(m.keys) {
-				key := m.keys[m.cursor]
+				key := m.keys[m.cursor].APIKey
 				if err := clipboard.WriteAll(key); err != nil {
 					m.status = errorStyle.Render(T("copy_failed") + ": " + err.Error())
 				} else {
@@ -308,13 +309,16 @@ func (m keysTabModel) renderContent() string {
 			rowStyle = lipgloss.NewStyle().Bold(true)
 		}
 
-		row := fmt.Sprintf("%s%d. %s", cursor, i+1, maskKey(key))
+		row := fmt.Sprintf("%s%d. %s", cursor, i+1, maskKey(key.APIKey))
+		if strings.TrimSpace(key.Comment) != "" {
+			row += "  " + helpStyle.Render(strings.TrimSpace(key.Comment))
+		}
 		sb.WriteString(rowStyle.Render(row))
 		sb.WriteString("\n")
 
 		// Delete confirmation
 		if m.confirm == i {
-			sb.WriteString(warningStyle.Render(fmt.Sprintf("    "+T("confirm_delete_key"), maskKey(key))))
+			sb.WriteString(warningStyle.Render(fmt.Sprintf("    "+T("confirm_delete_key"), maskKey(key.APIKey))))
 			sb.WriteString("\n")
 		}
 
@@ -383,9 +387,13 @@ func renderProviderKeys(sb *strings.Builder, title string, keys []map[string]any
 	renderSection(sb, title, len(keys))
 	for i, key := range keys {
 		apiKey := getString(key, "api-key")
+		comment := getString(key, "comment")
 		prefix := getString(key, "prefix")
 		baseURL := getString(key, "base-url")
 		info := maskKey(apiKey)
+		if comment != "" {
+			info += "  " + helpStyle.Render(comment)
+		}
 		if prefix != "" {
 			info += " (prefix: " + prefix + ")"
 		}

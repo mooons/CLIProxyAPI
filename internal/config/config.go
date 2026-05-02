@@ -300,6 +300,9 @@ type AmpUpstreamAPIKeyEntry struct {
 	// UpstreamAPIKey is the API key to use when proxying to the Amp upstream.
 	UpstreamAPIKey string `yaml:"upstream-api-key" json:"upstream-api-key"`
 
+	// Comment is optional human-readable metadata describing where this key is used.
+	Comment string `yaml:"comment,omitempty" json:"comment,omitempty"`
+
 	// APIKeys are the client API keys (from top-level api-keys) that map to this upstream key.
 	APIKeys []string `yaml:"api-keys" json:"api-keys"`
 }
@@ -372,6 +375,9 @@ type ClaudeKey struct {
 	// APIKey is the authentication key for accessing Claude API services.
 	APIKey string `yaml:"api-key" json:"api-key"`
 
+	// Comment is optional human-readable metadata describing where this key is used.
+	Comment string `yaml:"comment,omitempty" json:"comment,omitempty"`
+
 	// Priority controls selection preference when multiple credentials match.
 	// Higher values are preferred; defaults to 0.
 	Priority int `yaml:"priority,omitempty" json:"priority,omitempty"`
@@ -425,6 +431,9 @@ type CodexKey struct {
 	// APIKey is the authentication key for accessing Codex API services.
 	APIKey string `yaml:"api-key" json:"api-key"`
 
+	// Comment is optional human-readable metadata describing where this key is used.
+	Comment string `yaml:"comment,omitempty" json:"comment,omitempty"`
+
 	// Priority controls selection preference when multiple credentials match.
 	// Higher values are preferred; defaults to 0.
 	Priority int `yaml:"priority,omitempty" json:"priority,omitempty"`
@@ -472,6 +481,9 @@ func (m CodexModel) GetAlias() string { return m.Alias }
 type GeminiKey struct {
 	// APIKey is the authentication key for accessing Gemini API services.
 	APIKey string `yaml:"api-key" json:"api-key"`
+
+	// Comment is optional human-readable metadata describing where this key is used.
+	Comment string `yaml:"comment,omitempty" json:"comment,omitempty"`
 
 	// Priority controls selection preference when multiple credentials match.
 	// Higher values are preferred; defaults to 0.
@@ -544,6 +556,9 @@ type OpenAICompatibility struct {
 type OpenAICompatibilityAPIKey struct {
 	// APIKey is the authentication key for accessing the external API services.
 	APIKey string `yaml:"api-key" json:"api-key"`
+
+	// Comment is optional human-readable metadata describing where this key is used.
+	Comment string `yaml:"comment,omitempty" json:"comment,omitempty"`
 
 	// ProxyURL overrides the global proxy setting for this API key if provided.
 	ProxyURL string `yaml:"proxy-url,omitempty" json:"proxy-url,omitempty"`
@@ -674,6 +689,9 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	if cfg.MaxRetryCredentials < 0 {
 		cfg.MaxRetryCredentials = 0
 	}
+
+	// Sanitize client API key entries while preserving comments.
+	cfg.APIKeys = NormalizeAPIKeyEntries(cfg.APIKeys)
 
 	// Sanitize Gemini API key configuration and migrate legacy entries.
 	cfg.SanitizeGeminiKeys()
@@ -855,6 +873,11 @@ func (cfg *Config) SanitizeOpenAICompatibility() {
 		e.Prefix = normalizeModelPrefix(e.Prefix)
 		e.BaseURL = strings.TrimSpace(e.BaseURL)
 		e.Headers = NormalizeHeaders(e.Headers)
+		for j := range e.APIKeyEntries {
+			e.APIKeyEntries[j].APIKey = strings.TrimSpace(e.APIKeyEntries[j].APIKey)
+			e.APIKeyEntries[j].Comment = strings.TrimSpace(e.APIKeyEntries[j].Comment)
+			e.APIKeyEntries[j].ProxyURL = strings.TrimSpace(e.APIKeyEntries[j].ProxyURL)
+		}
 		if e.BaseURL == "" {
 			// Skip providers with no base-url; treated as removed
 			continue
@@ -873,8 +896,11 @@ func (cfg *Config) SanitizeCodexKeys() {
 	out := make([]CodexKey, 0, len(cfg.CodexKey))
 	for i := range cfg.CodexKey {
 		e := cfg.CodexKey[i]
+		e.APIKey = strings.TrimSpace(e.APIKey)
+		e.Comment = strings.TrimSpace(e.Comment)
 		e.Prefix = normalizeModelPrefix(e.Prefix)
 		e.BaseURL = strings.TrimSpace(e.BaseURL)
+		e.ProxyURL = strings.TrimSpace(e.ProxyURL)
 		e.Headers = NormalizeHeaders(e.Headers)
 		e.ExcludedModels = NormalizeExcludedModels(e.ExcludedModels)
 		if e.BaseURL == "" {
@@ -892,6 +918,10 @@ func (cfg *Config) SanitizeClaudeKeys() {
 	}
 	for i := range cfg.ClaudeKey {
 		entry := &cfg.ClaudeKey[i]
+		entry.APIKey = strings.TrimSpace(entry.APIKey)
+		entry.Comment = strings.TrimSpace(entry.Comment)
+		entry.BaseURL = strings.TrimSpace(entry.BaseURL)
+		entry.ProxyURL = strings.TrimSpace(entry.ProxyURL)
 		entry.Prefix = normalizeModelPrefix(entry.Prefix)
 		entry.Headers = NormalizeHeaders(entry.Headers)
 		entry.ExcludedModels = NormalizeExcludedModels(entry.ExcludedModels)
@@ -913,6 +943,7 @@ func (cfg *Config) SanitizeGeminiKeys() {
 		if entry.APIKey == "" {
 			continue
 		}
+		entry.Comment = strings.TrimSpace(entry.Comment)
 		entry.Prefix = normalizeModelPrefix(entry.Prefix)
 		entry.BaseURL = strings.TrimSpace(entry.BaseURL)
 		entry.ProxyURL = strings.TrimSpace(entry.ProxyURL)

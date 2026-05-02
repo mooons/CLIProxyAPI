@@ -107,15 +107,216 @@ func (h *Handler) deleteFromStringList(c *gin.Context, target *[]string, after f
 // api-keys
 func (h *Handler) GetAPIKeys(c *gin.Context) { c.JSON(200, gin.H{"api-keys": h.cfg.APIKeys}) }
 func (h *Handler) PutAPIKeys(c *gin.Context) {
-	h.putStringList(c, func(v []string) {
-		h.cfg.APIKeys = append([]string(nil), v...)
-	}, nil)
+	data, err := c.GetRawData()
+	if err != nil {
+		c.JSON(400, gin.H{"error": "failed to read body"})
+		return
+	}
+	arr, err := parseAPIKeyEntriesBody(data)
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid body"})
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.cfg.APIKeys = config.NormalizeAPIKeyEntries(arr)
+	h.persistLocked(c)
 }
+
 func (h *Handler) PatchAPIKeys(c *gin.Context) {
-	h.patchStringList(c, &h.cfg.APIKeys, func() {})
+	var body struct {
+		Old     *string         `json:"old"`
+		New     json.RawMessage `json:"new"`
+		Index   *int            `json:"index"`
+		Match   *string         `json:"match"`
+		Value   json.RawMessage `json:"value"`
+		APIKey  *string         `json:"api-key"`
+		Comment *string         `json:"comment"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(400, gin.H{"error": "invalid body"})
+		return
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	targetIndex := -1
+	if body.Index != nil && *body.Index >= 0 && *body.Index < len(h.cfg.APIKeys) {
+		targetIndex = *body.Index
+	}
+	if targetIndex == -1 {
+		match := ""
+		if body.Match != nil {
+			match = strings.TrimSpace(*body.Match)
+		}
+		if match == "" && body.Old != nil {
+			match = strings.TrimSpace(*body.Old)
+		}
+		if match != "" {
+			for i := range h.cfg.APIKeys {
+				if strings.TrimSpace(h.cfg.APIKeys[i].APIKey) == match {
+					targetIndex = i
+					break
+				}
+			}
+		}
+	}
+
+	rawValue := body.Value
+	if len(rawValue) == 0 {
+		rawValue = body.New
+	}
+	patch, hasPatch, err := parseAPIKeyEntryPatch(rawValue)
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid body"})
+		return
+	}
+	if body.APIKey != nil {
+		patch.APIKey = body.APIKey
+		hasPatch = true
+	}
+	if body.Comment != nil {
+		patch.Comment = body.Comment
+		hasPatch = true
+	}
+	if !hasPatch {
+		c.JSON(400, gin.H{"error": "missing fields"})
+		return
+	}
+
+	if targetIndex == -1 {
+		if body.Index != nil || body.Match != nil {
+			c.JSON(404, gin.H{"error": "item not found"})
+			return
+		}
+		entry := config.APIKeyEntry{}
+		applyAPIKeyPatch(&entry, patch)
+		if strings.TrimSpace(entry.APIKey) == "" {
+			c.JSON(400, gin.H{"error": "missing api-key"})
+			return
+		}
+		h.cfg.APIKeys = append(h.cfg.APIKeys, entry)
+		h.cfg.APIKeys = config.NormalizeAPIKeyEntries(h.cfg.APIKeys)
+		h.persistLocked(c)
+		return
+	}
+
+	entry := h.cfg.APIKeys[targetIndex]
+	if patch.APIKey != nil && strings.TrimSpace(*patch.APIKey) == "" {
+		h.cfg.APIKeys = append(h.cfg.APIKeys[:targetIndex], h.cfg.APIKeys[targetIndex+1:]...)
+		h.cfg.APIKeys = config.NormalizeAPIKeyEntries(h.cfg.APIKeys)
+		h.persistLocked(c)
+		return
+	}
+	applyAPIKeyPatch(&entry, patch)
+	h.cfg.APIKeys[targetIndex] = entry
+	h.cfg.APIKeys = config.NormalizeAPIKeyEntries(h.cfg.APIKeys)
+	h.persistLocked(c)
 }
+
 func (h *Handler) DeleteAPIKeys(c *gin.Context) {
-	h.deleteFromStringList(c, &h.cfg.APIKeys, func() {})
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if idxStr := c.Query("index"); idxStr != "" {
+		var idx int
+		_, err := fmt.Sscanf(idxStr, "%d", &idx)
+		if err == nil && idx >= 0 && idx < len(h.cfg.APIKeys) {
+			h.cfg.APIKeys = append(h.cfg.APIKeys[:idx], h.cfg.APIKeys[idx+1:]...)
+			h.cfg.APIKeys = config.NormalizeAPIKeyEntries(h.cfg.APIKeys)
+			h.persistLocked(c)
+			return
+		}
+	}
+	val := strings.TrimSpace(c.Query("api-key"))
+	if val == "" {
+		val = strings.TrimSpace(c.Query("value"))
+	}
+	if val != "" {
+		out := make([]config.APIKeyEntry, 0, len(h.cfg.APIKeys))
+		for _, entry := range h.cfg.APIKeys {
+			if strings.TrimSpace(entry.APIKey) != val {
+				out = append(out, entry)
+			}
+		}
+		if len(out) != len(h.cfg.APIKeys) {
+			h.cfg.APIKeys = config.NormalizeAPIKeyEntries(out)
+			h.persistLocked(c)
+			return
+		}
+		c.JSON(404, gin.H{"error": "item not found"})
+		return
+	}
+	c.JSON(400, gin.H{"error": "missing index or api-key"})
+}
+
+type apiKeyEntryPatch struct {
+	APIKey  *string
+	Comment *string
+}
+
+func parseAPIKeyEntriesBody(data []byte) ([]config.APIKeyEntry, error) {
+	var arr []config.APIKeyEntry
+	if err := json.Unmarshal(data, &arr); err == nil {
+		return arr, nil
+	}
+	var obj struct {
+		Items   []config.APIKeyEntry `json:"items"`
+		APIKeys []config.APIKeyEntry `json:"api-keys"`
+	}
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return nil, err
+	}
+	if len(obj.Items) > 0 {
+		return obj.Items, nil
+	}
+	return obj.APIKeys, nil
+}
+
+func parseAPIKeyEntryPatch(raw json.RawMessage) (apiKeyEntryPatch, bool, error) {
+	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
+		return apiKeyEntryPatch{}, false, nil
+	}
+	var patch apiKeyEntryPatch
+	trimmed := strings.TrimSpace(string(raw))
+	if strings.HasPrefix(trimmed, `"`) {
+		var apiKey string
+		if err := json.Unmarshal(raw, &apiKey); err != nil {
+			return patch, false, err
+		}
+		patch.APIKey = &apiKey
+		return patch, true, nil
+	}
+	var obj struct {
+		APIKey  *string `json:"api-key"`
+		Key     *string `json:"key"`
+		Value   *string `json:"value"`
+		Comment *string `json:"comment"`
+	}
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return patch, false, err
+	}
+	patch.APIKey = obj.APIKey
+	if patch.APIKey == nil {
+		patch.APIKey = obj.Key
+	}
+	if patch.APIKey == nil {
+		patch.APIKey = obj.Value
+	}
+	patch.Comment = obj.Comment
+	return patch, patch.APIKey != nil || patch.Comment != nil, nil
+}
+
+func applyAPIKeyPatch(entry *config.APIKeyEntry, patch apiKeyEntryPatch) {
+	if entry == nil {
+		return
+	}
+	if patch.APIKey != nil {
+		entry.APIKey = strings.TrimSpace(*patch.APIKey)
+	}
+	if patch.Comment != nil {
+		entry.Comment = strings.TrimSpace(*patch.Comment)
+	}
 }
 
 // gemini-api-key: []GeminiKey
@@ -148,6 +349,7 @@ func (h *Handler) PutGeminiKeys(c *gin.Context) {
 func (h *Handler) PatchGeminiKey(c *gin.Context) {
 	type geminiKeyPatch struct {
 		APIKey         *string            `json:"api-key"`
+		Comment        *string            `json:"comment"`
 		Prefix         *string            `json:"prefix"`
 		BaseURL        *string            `json:"base-url"`
 		ProxyURL       *string            `json:"proxy-url"`
@@ -196,6 +398,9 @@ func (h *Handler) PatchGeminiKey(c *gin.Context) {
 			return
 		}
 		entry.APIKey = trimmed
+	}
+	if body.Value.Comment != nil {
+		entry.Comment = strings.TrimSpace(*body.Value.Comment)
 	}
 	if body.Value.Prefix != nil {
 		entry.Prefix = strings.TrimSpace(*body.Value.Prefix)
@@ -308,6 +513,7 @@ func (h *Handler) PutClaudeKeys(c *gin.Context) {
 func (h *Handler) PatchClaudeKey(c *gin.Context) {
 	type claudeKeyPatch struct {
 		APIKey         *string               `json:"api-key"`
+		Comment        *string               `json:"comment"`
 		Prefix         *string               `json:"prefix"`
 		BaseURL        *string               `json:"base-url"`
 		ProxyURL       *string               `json:"proxy-url"`
@@ -348,6 +554,9 @@ func (h *Handler) PatchClaudeKey(c *gin.Context) {
 	entry := h.cfg.ClaudeKey[targetIndex]
 	if body.Value.APIKey != nil {
 		entry.APIKey = strings.TrimSpace(*body.Value.APIKey)
+	}
+	if body.Value.Comment != nil {
+		entry.Comment = strings.TrimSpace(*body.Value.Comment)
 	}
 	if body.Value.Prefix != nil {
 		entry.Prefix = strings.TrimSpace(*body.Value.Prefix)
@@ -600,6 +809,7 @@ func (h *Handler) PutVertexCompatKeys(c *gin.Context) {
 func (h *Handler) PatchVertexCompatKey(c *gin.Context) {
 	type vertexCompatPatch struct {
 		APIKey         *string                     `json:"api-key"`
+		Comment        *string                     `json:"comment"`
 		Prefix         *string                     `json:"prefix"`
 		BaseURL        *string                     `json:"base-url"`
 		ProxyURL       *string                     `json:"proxy-url"`
@@ -649,6 +859,9 @@ func (h *Handler) PatchVertexCompatKey(c *gin.Context) {
 			return
 		}
 		entry.APIKey = trimmed
+	}
+	if body.Value.Comment != nil {
+		entry.Comment = strings.TrimSpace(*body.Value.Comment)
 	}
 	if body.Value.Prefix != nil {
 		entry.Prefix = strings.TrimSpace(*body.Value.Prefix)
@@ -956,6 +1169,7 @@ func (h *Handler) PutCodexKeys(c *gin.Context) {
 func (h *Handler) PatchCodexKey(c *gin.Context) {
 	type codexKeyPatch struct {
 		APIKey         *string              `json:"api-key"`
+		Comment        *string              `json:"comment"`
 		Prefix         *string              `json:"prefix"`
 		BaseURL        *string              `json:"base-url"`
 		ProxyURL       *string              `json:"proxy-url"`
@@ -996,6 +1210,9 @@ func (h *Handler) PatchCodexKey(c *gin.Context) {
 	entry := h.cfg.CodexKey[targetIndex]
 	if body.Value.APIKey != nil {
 		entry.APIKey = strings.TrimSpace(*body.Value.APIKey)
+	}
+	if body.Value.Comment != nil {
+		entry.Comment = strings.TrimSpace(*body.Value.Comment)
 	}
 	if body.Value.Prefix != nil {
 		entry.Prefix = strings.TrimSpace(*body.Value.Prefix)
@@ -1092,6 +1309,8 @@ func normalizeOpenAICompatibilityEntry(entry *config.OpenAICompatibility) {
 	for i := range entry.APIKeyEntries {
 		trimmed := strings.TrimSpace(entry.APIKeyEntries[i].APIKey)
 		entry.APIKeyEntries[i].APIKey = trimmed
+		entry.APIKeyEntries[i].Comment = strings.TrimSpace(entry.APIKeyEntries[i].Comment)
+		entry.APIKeyEntries[i].ProxyURL = strings.TrimSpace(entry.APIKeyEntries[i].ProxyURL)
 		if trimmed != "" {
 			existing[trimmed] = struct{}{}
 		}
@@ -1119,6 +1338,7 @@ func normalizeClaudeKey(entry *config.ClaudeKey) {
 		return
 	}
 	entry.APIKey = strings.TrimSpace(entry.APIKey)
+	entry.Comment = strings.TrimSpace(entry.Comment)
 	entry.BaseURL = strings.TrimSpace(entry.BaseURL)
 	entry.ProxyURL = strings.TrimSpace(entry.ProxyURL)
 	entry.Headers = config.NormalizeHeaders(entry.Headers)
@@ -1144,6 +1364,7 @@ func normalizeCodexKey(entry *config.CodexKey) {
 		return
 	}
 	entry.APIKey = strings.TrimSpace(entry.APIKey)
+	entry.Comment = strings.TrimSpace(entry.Comment)
 	entry.Prefix = strings.TrimSpace(entry.Prefix)
 	entry.BaseURL = strings.TrimSpace(entry.BaseURL)
 	entry.ProxyURL = strings.TrimSpace(entry.ProxyURL)
@@ -1170,6 +1391,7 @@ func normalizeVertexCompatKey(entry *config.VertexCompatKey) {
 		return
 	}
 	entry.APIKey = strings.TrimSpace(entry.APIKey)
+	entry.Comment = strings.TrimSpace(entry.Comment)
 	entry.Prefix = strings.TrimSpace(entry.Prefix)
 	entry.BaseURL = strings.TrimSpace(entry.BaseURL)
 	entry.ProxyURL = strings.TrimSpace(entry.ProxyURL)
@@ -1412,6 +1634,7 @@ func (h *Handler) PatchAmpUpstreamAPIKeys(c *gin.Context) {
 		}
 		normalizedEntry := config.AmpUpstreamAPIKeyEntry{
 			UpstreamAPIKey: upstreamKey,
+			Comment:        strings.TrimSpace(newEntry.Comment),
 			APIKeys:        normalizeAPIKeysList(newEntry.APIKeys),
 		}
 		if idx, ok := existing[upstreamKey]; ok {
@@ -1486,6 +1709,7 @@ func normalizeAmpUpstreamAPIKeyEntries(entries []config.AmpUpstreamAPIKeyEntry) 
 		apiKeys := normalizeAPIKeysList(entry.APIKeys)
 		out = append(out, config.AmpUpstreamAPIKeyEntry{
 			UpstreamAPIKey: upstreamKey,
+			Comment:        strings.TrimSpace(entry.Comment),
 			APIKeys:        apiKeys,
 		})
 	}

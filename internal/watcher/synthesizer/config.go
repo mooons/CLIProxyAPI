@@ -63,6 +63,7 @@ func (s *ConfigSynthesizer) synthesizeGeminiKeys(ctx *SynthesisContext) []*corea
 		if entry.Priority != 0 {
 			attrs["priority"] = strconv.Itoa(entry.Priority)
 		}
+		addCommentToAttrs(entry.Comment, attrs)
 		if base != "" {
 			attrs["base_url"] = base
 		}
@@ -110,6 +111,7 @@ func (s *ConfigSynthesizer) synthesizeClaudeKeys(ctx *SynthesisContext) []*corea
 		if ck.Priority != 0 {
 			attrs["priority"] = strconv.Itoa(ck.Priority)
 		}
+		addCommentToAttrs(ck.Comment, attrs)
 		if base != "" {
 			attrs["base_url"] = base
 		}
@@ -157,6 +159,7 @@ func (s *ConfigSynthesizer) synthesizeCodexKeys(ctx *SynthesisContext) []*coreau
 		if ck.Priority != 0 {
 			attrs["priority"] = strconv.Itoa(ck.Priority)
 		}
+		addCommentToAttrs(ck.Comment, attrs)
 		if ck.BaseURL != "" {
 			attrs["base_url"] = ck.BaseURL
 		}
@@ -221,6 +224,7 @@ func (s *ConfigSynthesizer) synthesizeOpenAICompat(ctx *SynthesisContext) []*cor
 			if compat.Priority != 0 {
 				attrs["priority"] = strconv.Itoa(compat.Priority)
 			}
+			addCommentToAttrs(entry.Comment, attrs)
 			if key != "" {
 				attrs["api_key"] = key
 			}
@@ -300,6 +304,7 @@ func (s *ConfigSynthesizer) synthesizeVertexCompat(ctx *SynthesisContext) []*cor
 		if compat.Priority != 0 {
 			attrs["priority"] = strconv.Itoa(compat.Priority)
 		}
+		addCommentToAttrs(compat.Comment, attrs)
 		if key != "" {
 			attrs["api_key"] = key
 		}

@@ -71,6 +71,8 @@ func describeOpenAICompatibilityUpdate(oldEntry, newEntry config.OpenAICompatibi
 	}
 	if oldKeyCount != newKeyCount {
 		details = append(details, fmt.Sprintf("api-keys %d -> %d", oldKeyCount, newKeyCount))
+	} else if !equalOpenAIAPIKeyEntries(oldEntry.APIKeyEntries, newEntry.APIKeyEntries) {
+		details = append(details, "api-keys updated")
 	}
 	if oldModelCount != newModelCount {
 		details = append(details, fmt.Sprintf("models %d -> %d", oldModelCount, newModelCount))
@@ -82,6 +84,24 @@ func describeOpenAICompatibilityUpdate(oldEntry, newEntry config.OpenAICompatibi
 		return ""
 	}
 	return "(" + strings.Join(details, ", ") + ")"
+}
+
+func equalOpenAIAPIKeyEntries(a, b []config.OpenAICompatibilityAPIKey) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if strings.TrimSpace(a[i].APIKey) != strings.TrimSpace(b[i].APIKey) {
+			return false
+		}
+		if strings.TrimSpace(a[i].ProxyURL) != strings.TrimSpace(b[i].ProxyURL) {
+			return false
+		}
+		if strings.TrimSpace(a[i].Comment) != strings.TrimSpace(b[i].Comment) {
+			return false
+		}
+	}
+	return true
 }
 
 func countAPIKeys(entry config.OpenAICompatibility) int {

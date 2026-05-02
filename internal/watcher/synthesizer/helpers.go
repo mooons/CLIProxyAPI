@@ -118,3 +118,12 @@ func addConfigHeadersToAttrs(headers map[string]string, attrs map[string]string)
 		attrs["header:"+key] = val
 	}
 }
+
+func addCommentToAttrs(comment string, attrs map[string]string) {
+	if attrs == nil {
+		return
+	}
+	if trimmed := strings.TrimSpace(comment); trimmed != "" {
+		attrs["note"] = trimmed
+	}
+}

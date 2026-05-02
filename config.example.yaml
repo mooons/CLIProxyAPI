@@ -37,9 +37,12 @@ auth-dir: "~/.cli-proxy-api"
 
 # API keys for authentication
 api-keys:
-  - "your-api-key-1"
-  - "your-api-key-2"
-  - "your-api-key-3"
+  - api-key: "your-api-key-1"
+    comment: "Cursor on laptop"
+  - api-key: "your-api-key-2"
+    comment: "CI smoke tests"
+  - api-key: "your-api-key-3"
+    comment: "Team B shared key"
 
 # Enable debug logging
 debug: false
@@ -144,6 +147,7 @@ nonstream-keepalive-interval: 0
 # Gemini API keys
 # gemini-api-key:
 #   - api-key: "AIzaSy...01"
+#     comment: "Gemini project used by Cursor"
 #     prefix: "test" # optional: require calls like "test/gemini-3-pro-preview" to target this credential
 #     base-url: "https://generativelanguage.googleapis.com"
 #     headers:
@@ -163,6 +167,7 @@ nonstream-keepalive-interval: 0
 # Codex API keys
 # codex-api-key:
 #   - api-key: "sk-atSM..."
+#     comment: "Codex-compatible upstream for local testing"
 #     prefix: "test" # optional: require calls like "test/gpt-5-codex" to target this credential
 #     base-url: "https://www.example.com" # use the custom codex API endpoint
 #     headers:
@@ -181,7 +186,9 @@ nonstream-keepalive-interval: 0
 # Claude API keys
 # claude-api-key:
 #   - api-key: "sk-atSM..." # use the official claude API key, no need to set the base url
+#     comment: "Claude Code on desktop"
 #   - api-key: "sk-atSM..."
+#     comment: "Claude custom endpoint for CI"
 #     prefix: "test" # optional: require calls like "test/claude-sonnet-latest" to target this credential
 #     base-url: "https://www.example.com" # use the custom claude API endpoint
 #     headers:
@@ -242,9 +249,11 @@ nonstream-keepalive-interval: 0
 #       X-Custom-Header: "custom-value"
 #     api-key-entries:
 #       - api-key: "sk-or-v1-...b780"
+#         comment: "OpenRouter key for experiments"
 #         proxy-url: "socks5://proxy.example.com:1080" # optional: per-key proxy override
 #         # proxy-url: "direct" # optional: explicit direct connect for this credential
 #       - api-key: "sk-or-v1-...b781" # without proxy-url
+#         comment: "OpenRouter key for batch jobs"
 #     models: # The models supported by the provider.
 #       - name: "moonshotai/kimi-k2:free" # The actual model name.
 #         alias: "kimi-k2"               # The alias used in the API.
@@ -265,6 +274,7 @@ nonstream-keepalive-interval: 0
 # Vertex API keys (Vertex-compatible endpoints, base-url is optional)
 # vertex-api-key:
 #   - api-key: "vk-123..."                        # x-goog-api-key header
+#     comment: "Vertex-compatible provider for experiments"
 #     prefix: "test"                              # optional: require calls like "test/vertex-pro" to target this credential
 #     base-url: "https://example.com/api"         # optional, e.g. https://zenmux.ai/api; falls back to Google Vertex when omitted
 #     proxy-url: "socks5://proxy.example.com:1080" # optional per-key proxy override
@@ -292,10 +302,12 @@ nonstream-keepalive-interval: 0
 #   # If a client key isn't mapped, falls back to upstream-api-key (default behavior).
 #   upstream-api-keys:
 #     - upstream-api-key: "amp_key_for_team_a"    # Upstream key to use for these clients
+#       comment: "Team A Amp account"
 #       api-keys:                                 # Client keys that use this upstream key
 #         - "your-api-key-1"
 #         - "your-api-key-2"
 #     - upstream-api-key: "amp_key_for_team_b"
+#       comment: "Team B Amp account"
 #       api-keys:
 #         - "your-api-key-3"
 #   # Restrict Amp management routes (/api/auth, /api/user, etc.) to localhost only (default: false)
